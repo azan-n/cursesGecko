@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+import curses
+import json
+import os
+from datetime import datetime
+from datetime import date
+from configparser import ConfigParser
+from pycoingecko import CoinGeckoAPI
+
+cg = CoinGeckoAPI()
+mainFiat = "inr"
+coinsMarket = "btc"
+
+CONFIG_FILE = os.getenv("HOME") + "/.cursesGecko" + "/config.ini"
+LocalConfig = ConfigParser(interpolation=None)
+LocalConfig.read(CONFIG_FILE)
+
+for option in LocalConfig.options("config"):
+    if option == "mainfiat":
+        mainFiat = str(LocalConfig.get("config", option))
+    elif option == "coinsmarket":
+        coinsMarket = str(LocalConfig.get("config", option)).split(",")
+
+
+def getUserMarkets():
+    allMarkets = cg.get_coins_markets(mainFiat)
+    userMarkets = []
+
+    for coin in allMarkets:
+        if coin["symbol"] in coinsMarket:
+            userMarkets.append(coin)
+    return userMarkets
+
+def getMarketHistoryForCoin(coin):
+	marketHistory = cg.get_coin_market_chart_range_by_id(coin['id'], mainFiat, 1)
+	
+	
+	
+def initializeScreen():
+    curses.setupterm()
+    standardScreen = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+    standardScreen.keypad(True)
+    standardScreen.clear()
+
+    return standardScreen
+
+
+def terminateScreen(screen):
+    curses.nocbreak()
+    screen.keypad(0)
+    screen.clear()
+    curses.echo()
+    curses.endwin()
+    
+    
+def getScreenDimension(screen):
+    return screen.getmaxyx()
+
+
+def checkTermSizeChange(screen, standardScreenDimension):
+    change = False
+
+    if standardScreenDimension != screen.getmaxyx():
+        change = True
+    return change
+
+
+def openHeaderWindow(standardScreenDimension):
+    headerWindow = curses.newwin(2, standardScreenDimension[1], 0, 0)
+    return headerWindow
+
+
+def openNavWindow(standardScreenDimension):
+    navWindow = curses.newwin(standardScreenDimension[0] - 3 - 1, 5, 3, 0)
+    return navWindow
+
+
+def openDataWindow(standardScreenDimension):
+    dataWindow = curses.newwin(
+        standardScreenDimension[0] - 3 - 1, standardScreenDimension[1] - 7, 3, 8
+    )
+    return dataWindow
+
+
+def openTopBar(standardScreenDimension):
+    topBar = curses.newwin(1, standardScreenDimension[1], 2, 0)
+    topBar.clear()
+    topBar.addstr(0, 0, "Symbol  Price\tPriceChange%  MktCapChange%  MktCap\t   High")
+    return topBar
+
+
+def openFooterBar(standardScreenDimension):
+    footerBar = curses.newwin(
+        1, standardScreenDimension[1], standardScreenDimension[0] - 1, 0
+    )
+    footerBar.clear()
+    footerBar.addstr(0, 0, "[Enter]Check community data [r]Refresh [q]Quit")
+    return footerBar
+
+
+def refreshWindows(headerWindow, topBar, navWindow, dataWindow, footerBar):
+    headerWindow.refresh()
+    topBar.refresh()
+    navWindow.refresh()
+    dataWindow.refresh()
+    footerBar.refresh()
+
+
+def clearWindows(headerWindow, topBar, navWindow, dataWindow, footerBar):
+    headerWindow.clear()
+    topBar.clear()
+    navWindow.clear()
+    dataWindow.clear()
+    footerBar.clear()
+
+
+def initializeColor(headerWindow, topBar, navWindow, dataWindow, footerBar):
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_MAGENTA)
+        curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+        curses.init_pair(4, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(6, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+
+        topBar.bkgd(curses.color_pair(3))
+        footerBar.bkgd(curses.color_pair(3))
+        return True
+    except curses.error:
+        return False
+
+
+def dataWindowPrintHome(coin, dataWindow, navWindow, counter, pointer, color):
+    if coin["price_change_24h"] > 0 and color:
+        dataWindow.attron(curses.color_pair(4))
+        navWindow.attron(curses.color_pair(4))
+    elif coin["price_change_24h"] < 0 and color:
+        dataWindow.attron(curses.color_pair(5))
+        navWindow.attron(curses.color_pair(5))
+
+    dataWindow.addstr(counter, 0, "{0:<9}".format(coin["current_price"]))
+    dataWindow.addstr(
+        counter, 11, "{0:<3.3f}".format(coin["price_change_percentage_24h"])
+    )
+    dataWindow.addstr(
+        counter, 22, "{0:<3.3f}".format(coin["market_cap_change_percentage_24h"])
+    )
+    dataWindow.addstr(counter, 37, "{0:e}".format(coin["market_cap"]))
+    dataWindow.addstr(counter, 51, "{0:3.2f}".format(coin["high_24h"]))
+    # dataWindow.addstr(counter, 64, "{0:e}".format(coin["total_volume"]))
+
+    if counter == pointer:
+        navWindow.attron(curses.A_REVERSE)
+
+    navWindow.attron(curses.A_BOLD)
+    navWindow.addstr(counter, 0, "{}".format(coin["symbol"].upper()))
+    navWindow.attroff(curses.A_BOLD)
+
+    if counter == pointer:
+        navWindow.attroff(curses.A_REVERSE)
+
+    if coin["price_change_24h"] > 0 and color:
+        dataWindow.attroff(curses.color_pair(4))
+        navWindow.attroff(curses.color_pair(4))
+    elif coin["price_change_24h"] < 0 and color:
+        dataWindow.attroff(curses.color_pair(5))
+        navWindow.attroff(curses.color_pair(5))
+
+
+def headerWindowPrint(headerWindow, standardScreenDimension, mainFiatValues, color):
+    headerWindow.clear()
+    if color:
+        headerWindow.attron(curses.color_pair(6))
+
+    headerWindow.addstr(0, 0, "cursesGecko v0.1")
+    currentTime = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    headerWindow.addstr(
+        0, standardScreenDimension[1] - len(currentTime), str(currentTime)
+    )
+
+    if color:
+        headerWindow.attroff(curses.color_pair(6))
+
+    headerWindow.addstr(
+        1,
+        0,
+        "BTC/{} = {}{}".format(
+            mainFiatValues["name"], mainFiatValues["value"], mainFiatValues["unit"]
+        ),
+    )
+
+def normalize(arr, t_min, t_max):
+    norm_arr = []
+    diff = t_max - t_min
+    diff_arr = max(arr) - min(arr)
+    for i in arr:
+        temp = (((i - min(arr))*diff)/diff_arr) + t_min
+        norm_arr.append(temp)
+    return norm_arr
+    
+def printExtraData(
+    stdscr, headerWindow, topBar, navWindow, dataWindow, footerBar, coin, color
+):
+    standardScreenDimension = getScreenDimension(stdscr)
+    today = date.today()
+    dateForAPI = today.strftime("%d-%m-%Y")
+    clearWindows(headerWindow, topBar, navWindow, dataWindow, footerBar)
+    k = 0
+    
+    while 1:
+        if k == ord("q"):
+            break
+            
+        if color:
+            headerWindow.attron(curses.color_pair(6))
+            topBar.bkgd(curses.color_pair(2))
+            footerBar.bkgd(curses.color_pair(2))
+        
+        historyData = cg.get_coin_history_by_id(coin["id"], dateForAPI)
+        graphData = cg.get_coin_market_chart_by_id(coin["id"], mainFiat, 1)
+        
+        processed = []
+        
+        for i in graphData['prices']:
+            processed.append(i[1])
+			
+        processed_n = normalize(processed, 0 , 9)
+        
+        headerWindow.addstr(0, 0, "cursesGecko v0.1")
+        headerWindow.addstr(1, 0, "{}/{} = {}".format(coin["symbol"].upper(),mainFiat.upper(),historyData["market_data"]["current_price"][mainFiat]))
+        topBar.addstr(0, 0, "Alternative markets for {}".format(coin["id"]))
+        footerBar.addstr(0, 0, "[q]Go back")
+        navWindow.attron(curses.A_BOLD)
+        navWindow.attron(curses.A_REVERSE)
+        navWindow.addstr(0, 0, coin["symbol"].upper())
+        navWindow.attroff(curses.A_BOLD)
+        navWindow.attroff(curses.A_REVERSE)
+
+        dataWindow.clear()
+		
+        dataWindow.addstr(
+            0,
+            0,
+            "{}/{} = {}".format(
+                coin["symbol"].upper(),
+                "BTC",
+                historyData["market_data"]["current_price"]["btc"],
+            ),
+        )
+        dataWindow.addstr(
+            1,
+            0,
+            "{}/{} = {}".format(
+                coin["symbol"].upper(),
+                "ETH",
+                historyData["market_data"]["current_price"]["eth"],
+            ),
+        )
+
+        dataWindow.addstr(
+            2, 0, "Forks: {}".format(historyData["developer_data"]["forks"])
+        )
+        dataWindow.addstr(
+            3,
+            0,
+            "Commit Count(4 weeks): {}".format(
+                historyData["developer_data"]["commit_count_4_weeks"]
+            ),
+        )
+        
+        dataWindow.addstr(5, 0, "24 Price Change Trend:")
+        
+        # dataWindow.vline(5,0,standardScreenDimension[0]-6)
+        j = 7
+        while j != standardScreenDimension[0]-5:
+            dataWindow.addch(j,0,"|")
+            j=j+1
+        
+        # dataWindow.hline(standardScreenDimension[0]-6,0,standardScreenDimension[1]-3)    
+        j = 0
+        while j != standardScreenDimension[1]-10:
+            dataWindow.addch(standardScreenDimension[0]-5, j, "=")
+            j=j+1
+        
+        if coin["price_change_24h"] > 0 and color:
+            dataWindow.attron(curses.color_pair(4))
+            
+        elif coin["price_change_24h"] < 0 and color:
+            dataWindow.attron(curses.color_pair(5))
+        
+        graphXPointer = 2
+        for i in processed_n:
+            if graphXPointer == standardScreenDimension[1] - 10:
+                break
+            dataWindow.insstr((16) - round(i), graphXPointer, '-')
+            graphXPointer = graphXPointer + 1
+        
+        if coin["price_change_24h"] > 0 and color:
+            dataWindow.attroff(curses.color_pair(4))
+            
+        elif coin["price_change_24h"] < 0 and color:
+            dataWindow.attroff(curses.color_pair(5))
+            
+        refreshWindows(headerWindow, topBar, navWindow, dataWindow, footerBar)
+
+        k = stdscr.getch()
+
+    clearWindows(headerWindow, topBar, navWindow, dataWindow, footerBar)
+    refreshWindows(headerWindow, topBar, navWindow, dataWindow, footerBar)
+
+
+def main():
+    stdscr = initializeScreen()
+    standardScreenDimension = getScreenDimension(stdscr)
+
+    # Our own basic implementation of a cursor
+    # Due to the application being mostly linear, the ncurses pointer/cursor is rather unnecessary
+    pointer = 1
+
+    if cg.ping()["gecko_says"] == "(V3) To the Moon!":
+        mainFiatValues = cg.get_exchange_rates()["rates"][mainFiat]
+        userMarkets = getUserMarkets()
+
+        k = 0
+        while 1:
+            # Initialize Windows
+            headerWindow = openHeaderWindow(standardScreenDimension)
+            navWindow = openNavWindow(standardScreenDimension)
+            dataWindow = openDataWindow(standardScreenDimension)
+            topBar = openTopBar(standardScreenDimension)
+            footerBar = openFooterBar(standardScreenDimension)
+
+            # Keybindings for navigation
+            if k == ord("q"):
+                break
+
+            if k == ord("r"):
+                userMarkets = getUserMarkets()
+
+            if k == curses.KEY_DOWN:
+                if pointer < len(userMarkets) - 1 :
+                    pointer += 1
+                else:
+                    pointer = 0
+
+            if k == curses.KEY_UP:
+                if pointer < len(userMarkets) - 1 and pointer > 0:
+                    pointer -= 1
+                else:
+                    pointer = 0
+
+            if k == 10:
+                printExtraData(
+                    stdscr,
+                    headerWindow,
+                    topBar,
+                    navWindow,
+                    dataWindow,
+                    footerBar,
+                    userMarkets[pointer],
+                    color,
+                )
+
+            # Check for color support and enable color
+            color = initializeColor(
+                headerWindow, topBar, navWindow, dataWindow, footerBar
+            )
+
+            # Reload Screen if Terminal Window Size Changes
+            if checkTermSizeChange(stdscr, standardScreenDimension) == True:
+                terminateScreen(stdscr)
+                stdscr = initializeScreen()
+                standardScreenDimension = getScreenDimension(stdscr)
+
+            counter = 0
+            dataWindow.clear()
+            for coin in userMarkets:
+                dataWindowPrintHome(
+                    coin, dataWindow, navWindow, counter, pointer, color
+                )
+                counter += 1
+
+            headerWindowPrint(
+                headerWindow, standardScreenDimension, mainFiatValues, color
+            )
+
+            refreshWindows(headerWindow, topBar, navWindow, dataWindow, footerBar)
+
+            k = stdscr.getch()
+
+    terminateScreen(stdscr)
+
+
+if __name__ == "__main__":
+    main()
