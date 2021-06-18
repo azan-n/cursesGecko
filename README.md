@@ -1,7 +1,7 @@
 # cursesGecko
 A basic curses cryptocurrency tracker made for a college project.
 
-[xfce4-term](https://imgur.com/4JSip73.png "Main screen on XFCE4 Terminal")
+![xfce4-term](https://imgur.com/4JSip73.png "Main screen on XFCE4 Terminal")
 
 ![xfce4-term2](https://imgur.com/HywaMPC.png "Alt screen on XFCE4 Terminal")
 
